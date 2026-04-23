@@ -1,0 +1,8 @@
+docker_image: "kaayleigh/fastapi-app"
+aws_region: "us-east-1"
+instance_type: "t2.micro"
+key_name: "new-ec2-key"
+ami_id: "ami-098e39bafa7e7303d"
+instance_name: "prod-fastapi"
+ssh_user: "ubuntu"
+container_name: "fastapi-prod"

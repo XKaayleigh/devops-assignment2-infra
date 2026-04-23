@@ -1,0 +1,84 @@
+---
+- name: Configure EC2 and deploy app
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - group_vars/all/vars.yml
+
+  tasks:
+    - name: Read production IP
+      ansible.builtin.slurp:
+        src: /tmp/prod_ip.txt
+      register: prod_ip_file
+
+    - name: Set production IP fact
+      ansible.builtin.set_fact:
+        prod_ip: "{{ prod_ip_file.content | b64decode | trim }}"
+
+    - name: Add EC2 host to inventory
+      ansible.builtin.add_host:
+        name: "{{ prod_ip }}"
+        groups: prod
+        ansible_user: "{{ ssh_user }}"
+        ansible_ssh_private_key_file: "/var/lib/jenkins/.ssh/{{ key_name }}.pem"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+
+- name: Install Docker and run container
+  hosts: prod
+  become: true
+  gather_facts: false
+  vars_files:
+    - group_vars/all/vars.yml
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.raw: sudo apt-get update -y
+
+    - name: Install Docker
+      ansible.builtin.raw: sudo apt-get install -y docker.io
+
+    - name: Start Docker service
+      ansible.builtin.raw: sudo systemctl start docker
+
+    - name: Enable Docker service
+      ansible.builtin.raw: sudo systemctl enable docker
+
+    - name: Remove old container if it exists
+      ansible.builtin.shell: docker rm -f {{ container_name }}
+      ignore_errors: true
+
+    - name: Pull selected Docker image
+      ansible.builtin.shell: docker pull {{ docker_image }}:{{ image_tag }}
+
+    - name: Run container
+      ansible.builtin.shell: >
+        docker run -d --name {{ container_name }}
+        -p 80:80
+        {{ docker_image }}:{{ image_tag }}
+
+- name: Verify app response
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Read production IP again
+      ansible.builtin.slurp:
+        src: /tmp/prod_ip.txt
+      register: verify_ip_file
+
+    - name: Set verify IP fact
+      ansible.builtin.set_fact:
+        verify_ip: "{{ verify_ip_file.content | b64decode | trim }}"
+
+    - name: Wait for app to respond
+      ansible.builtin.uri:
+        url: "http://{{ verify_ip }}"
+        method: GET
+        status_code: 200
+        validate_certs: false
+      register: app_result
+      retries: 10
+      delay: 10
+      until: app_result.status == 200
